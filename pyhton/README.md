@@ -6,7 +6,7 @@ Este script en Python descarga datos de corrientes oceánicas (u, v) desde el se
 
 - Descarga datos de corrientes oceánicas (u, v) en formato `.nc`.
 - Permite definir una región geográfica de interés mediante coordenadas.
-- Descarga datos cada 3 horas dentro de un rango de fechas especificado.
+- Descarga datos dentro de un rango de fechas especificado.
 - Maneja errores y reintentos automáticos en caso de fallos.
 - Utiliza **descargas en paralelo** para mayor eficiencia.
 
