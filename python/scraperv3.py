@@ -19,7 +19,6 @@ Funcionamiento:
 6. Maneja errores de descarga con reintentos.
 7. Opcionalmente, utiliza concurrencia (threads) para descargar múltiples archivos en paralelo.
 """
-
 import os
 import requests
 import time
@@ -32,14 +31,23 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # -----------------------------------------------------------------------------
 
 # Coordenadas
-east = 11.30
-west = 11.25
-south = -6.33
-north = -6.31
+
+west  = float(input("Longitud oeste (west): "))
+east  = float(input("Longitud este  (east): "))
+south = float(input("Latitud sur   (south): "))
+north = float(input("Latitud norte (north): "))
+
 
 # Fechas de inicio y fin (en formato 'dd-MMM-yyyy HH:mm:ss')
-date_start = '01-Jan-1994 12:00:00'
-date_end   = '31-Jan-1994 23:00:00'
+print("Ejemplo: 01-Jan-1994 12:00:00")
+date_start= input("Fecha y hora (dd-MMM-yyyy HH:mm:ss): ")
+time_point = parser.parse(date_start)
+
+print("Ejemplo:31-Jan-1994 23:00:00 ")
+date_end= input("Fecha y hora (dd-MMM-yyyy HH:mm:ss): ")
+time_point = parser.parse(date_end)
+# Fechas de inicio y fin (en formato 'dd-MMM-yyyy HH:mm:ss')
+
 
 # Cantidad de horas entre cada descarga
 time_step_hours = 3
@@ -106,33 +114,29 @@ def build_download_url(time_point, west, east, south, north):
     
     return url
 
-def download_file(url, output_path, max_retries=5, wait_seconds=5):
-    """
-    Descarga un archivo desde la URL especificada y lo guarda en output_path.
-    Si falla, reintenta hasta max_retries veces.
-    
-    :param url: URL de descarga.
-    :param output_path: Ruta de destino donde se guardará el archivo descargado.
-    :param max_retries: Número máximo de reintentos en caso de error.
-    :param wait_seconds: Tiempo de espera (en segundos) antes de cada reintento.
-    """
+def download_file(url, output_path, max_retries=5, wait_seconds=5, min_bytes=1024):
     attempt = 0
     while attempt < max_retries:
         try:
-            response = requests.get(url, timeout=30)  # Ajusta el timeout según sea necesario
-            response.raise_for_status()  # Lanza excepción si hay un error HTTP
-            with open(output_path, 'wb') as f:
-                f.write(response.content)
+            r = requests.get(url, timeout=30)
+            r.raise_for_status()
+            with open(output_path, "wb") as f:
+                f.write(r.content)
+
+            # --- VALIDACIÓN BÁSICA ---
+            if os.path.getsize(output_path) < min_bytes:
+                raise ValueError("archivo demasiado pequeño — posible error del servidor")
+
             print(f"[OK] {os.path.basename(output_path)} descargado.")
-            return  # Éxito, salimos de la función
+            return
         except Exception as e:
             attempt += 1
             print(f"[ERROR] Intento {attempt}/{max_retries} fallido: {e}")
             if attempt < max_retries:
-                print(f"Reintentando en {wait_seconds} segundos...")
                 time.sleep(wait_seconds)
-    # Si llega aquí, no se pudo descargar tras varios reintentos
-    print(f"[FATAL] No se pudo descargar {os.path.basename(output_path)} después de {max_retries} reintentos.")
+
+    # Tras agotar reintentos, forzar fallo real
+    raise RuntimeError(f"No se pudo descargar {os.path.basename(output_path)}")
 
 # -----------------------------------------------------------------------------
 # Función principal
@@ -170,32 +174,31 @@ def main():
         time_points.append(current_time)
         current_time += timedelta(hours=time_step_hours)
 
+     # —– descarga secuencial, bloqueante hasta el éxito —–
     successful_downloads = []
-    failed_downloads = []
+    failed_downloads = []  # opcional, para registro si quieres
 
-    # Preparamos las descargas en paralelo
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_time = {}
+    for t_point in time_points:
+        url = build_download_url(t_point, west, east, south, north)
+        filename = t_point.strftime('%Y%m%d_%H') + ".nc"
+        output_path = os.path.join(result_directory, filename)
 
-        # Se programa cada descarga
-        for t_point in time_points:
-            url = build_download_url(t_point, west, east, south, north)
-            filename = t_point.strftime('%Y%m%d_%H') + ".nc"
-            output_path = os.path.join(result_directory, filename)
-
-            # Asignamos la tarea (future) para descargar
-            future = executor.submit(download_file, url, output_path)
-            future_to_time[future] = filename
-
-        # Esperamos a que terminen todas las descargas
-        for future in as_completed(future_to_time):
-            file_name = future_to_time[future]
+        while True:
             try:
-                future.result()  # Si hay excepción dentro de download_file, se lanzará aquí
-                successful_downloads.append(file_name)
+                download_file(url, output_path,
+                              max_retries=1,   # Internamente sólo 1 intento por llamada
+                              wait_seconds=0,  # sin espera (no hace falta)
+                              min_bytes=1024)
+                successful_downloads.append(filename)
+                break  # ¡ya descargó con éxito, sal del while y continúa al siguiente!
             except Exception as e:
-                failed_downloads.append(file_name)
-                print(f"[ERROR] Ocurrió un problema con el archivo {file_name}: {e}")
+                # Aquí podrás ver el error y volver a intentarlo *infinitamente*
+                print(f"[REINTENTO INFINITO] Error al bajar {filename}: {e}")
+                # no hay sleep, o bien:
+                time.sleep(5)  # si prefieres esperar un poco entre reintentos
+
+    # … luego imprimir tu resumen basado en `successful_downloads` (y `failed_downloads` si los guardas)
+
 
     end_time = time.time()  # Detener temporizador
     total_time = end_time - start_time  # Calcular tiempo total en segundos
